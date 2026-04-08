@@ -1,10 +1,17 @@
 import time
 import serial
 import threading
+import os
 import math
+import csv
+import datetime
 import numpy as np
 from scipy.fft import rfft, rfftfreq
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
+
+# Create dataset directory if it doesn't exist
+DATASET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dataset')
+os.makedirs(DATASET_DIR, exist_ok=True)
 
 # --- Configuration ---
 SERIAL_PORT = 'COM9'
@@ -19,9 +26,13 @@ sensor_data = {
     'raw_gx': 0, 'raw_gy': 0, 'raw_gz': 0,
     'ax_g': 0.0, 'ay_g': 0.0, 'az_g': 0.0,
     'gx_dps': 0.0, 'gy_dps': 0.0, 'gz_dps': 0.0,
-    'dsp_freq': 0.0, 'dsp_amp': 0.0, 'dsp_axis': 'None'
+    'dsp_freq': 0.0, 'dsp_amp': 0.0, 'dsp_axis': 'None',
+    'needs_label': False
 }
 data_lock = threading.Lock()
+
+# --- Active Learning Labels ---
+pending_label_window = {'x': [], 'y': [], 'z': []}
 
 # --- DSP Buffers ---
 BUFFER_SIZE = 256
@@ -232,6 +243,16 @@ def dsp_worker():
                     sensor_data['dsp_freq'] = dom_freq
                     sensor_data['dsp_amp'] = highest_amp / (BUFFER_SIZE/2) # Normalize FFT amplitude
                     sensor_data['dsp_axis'] = 'Accel ' + dom_axis # Explicitly state data source
+                    
+                    # TRIGGER ACTIVE LEARNING: We detected a confirmed uniform periodic signal
+                    # If we haven't already asked the user for this specific event, trigger the UI
+                    if not sensor_data['needs_label'] and freq_streak_count == STREAK_THRESHOLD:
+                        sensor_data['needs_label'] = True
+                        global pending_label_window
+                        pending_label_window['x'] = list(x_data)
+                        pending_label_window['y'] = list(y_data)
+                        pending_label_window['z'] = list(z_data)
+                        print("TRIGGERED ACTIVE LEARNING NOTIFICATION")
             else:
                 # Still stabilizing
                 with data_lock:
@@ -250,6 +271,38 @@ def dsp_worker():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/log_data', methods=['POST'])
+def log_data():
+    global pending_label_window
+    data = request.json
+    label = data.get('label', 'Unknown')
+    
+    with data_lock:
+        sensor_data['needs_label'] = False # Reset the UI flag
+        
+    if not pending_label_window['x']:
+        return jsonify({"status": "error", "message": "No pending data"})
+        
+    # Save the window to a CSV
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{label}_{timestamp}.csv"
+    filepath = os.path.join(DATASET_DIR, filename)
+    
+    with open(filepath, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['ax_g', 'ay_g', 'az_g'])
+        for i in range(len(pending_label_window['x'])):
+            writer.writerow([
+                pending_label_window['x'][i],
+                pending_label_window['y'][i],
+                pending_label_window['z'][i]
+            ])
+            
+    # Clear the pending window
+    pending_label_window = {'x': [], 'y': [], 'z': []}
+    print(f"Data successfully saved to {filepath}")
+    return jsonify({"status": "success", "message": f"Saved {filename}"})
 
 @app.route('/data')
 def get_data():
