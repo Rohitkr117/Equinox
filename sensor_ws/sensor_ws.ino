@@ -1,16 +1,17 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebSocketsServer.h>
+#include <ESPmDNS.h>
 
 // Forward declaration to prevent Arduino IDE preprocessor issues with WStype_t
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 
 // =========================================================================
-// 1. ACCESS POINT (HOTSPOT) SETTINGS
-//    The ESP32 creates its own Wi-Fi network. Your laptop connects to it.
+// 1. Wi-Fi STATION SETTINGS (Connect to Laptop Hotspot)
+//    The ESP32 connects as a client, saving massive battery & heat.
 // =========================================================================
-const char* ap_ssid     = "Equinox-Sensor";
-const char* ap_password = "equinox123";
+const char* wifi_ssid     = "Equinox-Sensor";
+const char* wifi_password = "equinox123";
 
 // =========================================================================
 // 2. SENSOR SETTINGS
@@ -81,15 +82,28 @@ void setup() {
   Wire.endTransmission(true);
 
   // -----------------------------------------------------------------------
-  // Start the ESP32 as a Wi-Fi Access Point (Hotspot)
-  // Your laptop will connect to this network.
+  // Start the ESP32 as a Wi-Fi Client (Station Mode)
   // -----------------------------------------------------------------------
-  WiFi.softAP(ap_ssid, ap_password);
-  Serial.println("\n--- Equinox Sensor Hotspot Started ---");
-  Serial.print("SSID     : "); Serial.println(ap_ssid);
-  Serial.print("Password : "); Serial.println(ap_password);
-  Serial.print("IP       : "); Serial.println(WiFi.softAPIP());
-  Serial.println("--------------------------------------");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_password);
+  
+  Serial.print("\nConnecting to Wi-Fi: ");
+  Serial.println(wifi_ssid);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\n--- Connected to Wi-Fi ---");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+  
+  // Start mDNS Responder: equinox.local
+  if (!MDNS.begin("equinox")) {
+    Serial.println("Error setting up MDNS responder!");
+    Serial.println("mDNS responder started! Python can connect to ws://equinox.local:81");
+  }
 
   // Start the WebSocket server on port 81
   webSocket.begin();

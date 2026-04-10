@@ -68,10 +68,10 @@ class TemporalConvNet(nn.Module):
         return self.network(x)
 
 class TremorClassifierTCN(nn.Module):
-    def __init__(self, input_channels=3, num_classes=3):
+    def __init__(self, input_channels=2, num_classes=3):
         super(TremorClassifierTCN, self).__init__()
         # Emulating the ECAPA-TDNN depth style for rapid temporal extraction
-        # input_channels = 3 (X, Y, Z physical accelerometer readings)
+        # input_channels = 2 (1: Accel Magnitude, 2: Gyro Magnitude)
         # We build 3 blocks of Dilated Convolutions
         channel_sizes = [16, 32, 64] 
         self.tcn = TemporalConvNet(input_channels, channel_sizes, kernel_size=3, dropout=0.25)

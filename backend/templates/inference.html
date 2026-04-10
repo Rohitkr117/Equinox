@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equinox - Inference Engine</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.10.0"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        .data-card {
+            background-color: rgba(30, 41, 59, 0.7); 
+            border: 1px solid rgba(148, 163, 184, 0.2); 
+            backdrop-filter: blur(12px);
+        }
+        .chart-container { position: relative; height: calc(50vh - 8rem); width: 100%; }
+        
+        .pulse-ring {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(3); opacity: 0; }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-900 text-slate-50 antialiased flex h-screen w-screen">
+    <div hx-get="/data" hx-trigger="every 50ms" hx-swap="none"></div>
+    
+    <!-- Model Status Widget (HTMX driven) -->
+    <div hx-get="/model_status" hx-trigger="load, every 5s" class="absolute top-8 right-8 z-50 transition-all">
+        <div class="px-4 py-3 bg-slate-800 border border-slate-700 rounded-2xl flex items-center gap-3 shadow-2xl glass-card">
+            <div class="w-3 h-3 bg-slate-500 rounded-full animate-pulse"></div>
+            <span class="text-sm font-semibold text-slate-300">Checking Model Registry...</span>
+        </div>
+    </div>
+
+    <!-- LEFT PANEL: 3D Visualization -->
+    <div class="relative w-1/2 h-full shrink-0 border-r border-slate-800" id="left-panel">
+        <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+        <div class="absolute top-0 left-0 p-8 w-full z-10 pointer-events-none">
+            <header class="mb-4">
+                <div class="inline-flex items-center gap-3 mb-2">
+                    <a href="/" class="pointer-events-auto bg-slate-800 hover:bg-slate-700 p-2 rounded-full border border-slate-700 transition-colors">
+                        <svg class="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    </a>
+                    <h1 class="text-3xl font-bold tracking-tight text-white drop-shadow-md">Inference Engine</h1>
+                </div>
+                <p class="text-sm font-medium tracking-wide text-purple-400 mt-1 uppercase ml-12">PyTorch TCN Live Predictions</p>
+            </header>
+
+            <!-- TCN Inference Panel -->
+            <div class="data-card rounded-2xl shadow-2xl p-6 pointer-events-auto transition-all duration-300 w-full max-w-[380px] ml-12 border-purple-500/30 border">
+                <div id="inference-display" class="flex flex-col items-center justify-center py-4">
+                    <div class="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-4">Current Prediction</div>
+                    <div class="relative w-24 h-24 flex items-center justify-center mb-4">
+                        <div class="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
+                        <div class="absolute inset-0 border-4 border-purple-500 rounded-full border-t-transparent animate-spin"></div>
+                        <div class="text-2xl">🧠</div>
+                    </div>
+                    <div class="text-xl font-bold text-slate-300" id="inf-class">Awaiting AI...</div>
+                    <div class="text-xs text-slate-500 font-mono mt-2" id="inf-conf">Confidence: --%</div>
+                </div>
+            </div>
+
+            <!-- Sensor Core Data -->
+            <div class="data-card mt-4 rounded-2xl shadow-xl p-6 pointer-events-auto transition-all duration-300 w-full max-w-[380px] ml-12">
+                <div id="data-display" class="text-slate-400 font-medium">Buffering physical sensors...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL: Real-time Charts -->
+    <div class="w-1/2 h-full flex flex-col p-6 gap-6 bg-slate-900 z-10 overflow-hidden" id="right-panel">
+        <div class="data-card flex-1 rounded-2xl shadow-xl p-4 flex flex-col">
+            <div class="flex justify-between items-center mb-2">
+                <h2 class="font-bold text-emerald-400">Accelerometer Stream</h2>
+            </div>
+            <div class="chart-container flex-1"><canvas id="accelChart"></canvas></div>
+        </div>
+        <div class="data-card flex-1 rounded-2xl shadow-xl p-4 flex flex-col">
+            <div class="flex justify-between items-center mb-2">
+                <h2 class="font-bold text-purple-400">Gyroscope Stream</h2>
+            </div>
+            <div class="chart-container flex-1"><canvas id="gyroChart"></canvas></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Chart.js Setup ---
+        const maxPoints = 100; 
+        const createEmptyArray = () => Array(maxPoints).fill(0);
+        const blankLabels = Array(maxPoints).fill('');
+
+        const chartOptions = {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: { x: { display: false }, y: { grid: { color: 'rgba(51,65,85,0.5)' }, ticks: { color: '#94a3b8' } } },
+            plugins: { legend: { labels: { color: '#f8fafc', boxWidth: 8 } }, tooltip: { enabled: false } },
+            elements: { line: { tension: 0.2, borderWidth: 2 }, point: { radius: 0 } }
+        };
+
+        window.accelChart = new Chart(document.getElementById('accelChart').getContext('2d'), {
+            type: 'line',
+            data: { labels: blankLabels, datasets: [
+                { label: 'X', borderColor: '#ef4444', data: createEmptyArray() },
+                { label: 'Y', borderColor: '#22c55e', data: createEmptyArray() },
+                { label: 'Z', borderColor: '#3b82f6', data: createEmptyArray() }
+            ]},
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, suggestedMin: -2, suggestedMax: 2 } } }
+        });
+
+        window.gyroChart = new Chart(document.getElementById('gyroChart').getContext('2d'), {
+            type: 'line',
+            data: { labels: blankLabels, datasets: [
+                { label: 'X', borderColor: '#ef4444', data: createEmptyArray() },
+                { label: 'Y', borderColor: '#22c55e', data: createEmptyArray() },
+                { label: 'Z', borderColor: '#3b82f6', data: createEmptyArray() }
+            ]},
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, suggestedMin: -250, suggestedMax: 250 } } }
+        });
+
+        // --- Three.js Setup ---
+        let scene, camera, renderer, cube, controls;
+        const leftPanel = document.getElementById('left-panel');
+
+        function init3D() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a); 
+            camera = new THREE.PerspectiveCamera(60, leftPanel.clientWidth / leftPanel.clientHeight, 0.1, 1000);
+            camera.position.set(2.5, 3.5, 4.5);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(leftPanel.clientWidth, leftPanel.clientHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const dl = new THREE.DirectionalLight(0xffffff, 1.2); dl.position.set(5,10,7); scene.add(dl);
+            
+            cube = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 3), new THREE.MeshStandardMaterial({ color: 0xc084fc, roughness: 0.2, metalness: 0.8 }));
+            scene.add(cube);
+            cube.add(new THREE.AxesHelper(3));
+            const gridHelper = new THREE.GridHelper(20, 20, 0x334155, 0x1e293b); gridHelper.position.y = -1.5; scene.add(gridHelper);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            window.addEventListener('resize', () => { camera.aspect = leftPanel.clientWidth/leftPanel.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(leftPanel.clientWidth, leftPanel.clientHeight); }, false);
+            animate3D();
+        }
+        function animate3D() { requestAnimationFrame(animate3D); controls.update(); renderer.render(scene, camera); }
+        init3D();
+
+        // --- HTMX Data Receiver ---
+        document.body.addEventListener('htmx:afterOnLoad', function(event) {
+            if (event.detail.pathInfo.requestPath === '/data') {
+                try {
+                    const data = JSON.parse(event.detail.xhr.responseText);
+                    if (data.raw_ax !== undefined) {
+                        if (cube) cube.rotation.set(THREE.MathUtils.degToRad(data.pitch), THREE.MathUtils.degToRad(data.yaw), THREE.MathUtils.degToRad(data.roll), 'XYZ');
+
+                        window.accelChart.data.datasets.forEach((ds, i) => ds.data.push(i===0?data.ax_g : i===1?data.ay_g : data.az_g));
+                        window.accelChart.data.datasets.forEach(ds => ds.data.shift()); window.accelChart.update();
+                        
+                        window.gyroChart.data.datasets.forEach((ds, i) => ds.data.push(i===0?data.gx_dps : i===1?data.gy_dps : data.gz_dps));
+                        window.gyroChart.data.datasets.forEach(ds => ds.data.shift()); window.gyroChart.update();
+
+                        document.getElementById('data-display').innerHTML = `<div class="grid grid-cols-2 gap-4 text-xs font-mono"><div class="text-emerald-400">Accel(g)<br>X: ${data.ax_g.toFixed(2)} Y: ${data.ay_g.toFixed(2)} Z: ${data.az_g.toFixed(2)}</div><div class="text-purple-400">Gyro(dps)<br>X: ${data.gx_dps.toFixed(0)} Y: ${data.gy_dps.toFixed(0)} Z: ${data.gz_dps.toFixed(0)}</div></div>`;
+                        
+                        // Live Inference UI Update
+                        if (data.predicted_class && data.predicted_class !== 'Unknown') {
+                            document.getElementById('inf-class').innerText = data.predicted_class;
+                            document.getElementById('inf-conf').innerText = `Confidence: TCN Model Active`;
+                            document.querySelector('.animate-spin').classList.remove('border-slate-700', 'border-purple-500');
+                            document.querySelector('.animate-spin').classList.add('border-emerald-500');
+                        } else if (data.predicted_class === 'Unknown') {
+                            document.getElementById('inf-class').innerText = 'Awaiting AI...';
+                            document.getElementById('inf-conf').innerText = `Confidence: --%`;
+                            document.querySelector('.animate-spin').classList.remove('border-emerald-500');
+                            document.querySelector('.animate-spin').classList.add('border-slate-700', 'border-purple-500');
+                        }
+                    }
+                } catch (e) {}
+            }
+        });
+    </script>
+</body>
+</html>

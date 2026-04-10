@@ -348,9 +348,13 @@
                             
                             let dspContent = '';
                             if (data.dsp_freq > 0) {
+                                let badgeHtml = data.episode_active ? 
+                                    '<span class="text-xs font-bold text-red-500 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/40 flex items-center gap-1.5 shadow-[0_0_10px_rgba(239,68,68,0.3)]"><span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>VALID SIGNAL</span>' :
+                                    '<span class="text-xs font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/40 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>BUFFERING 7s...</span>';
+
                                 dspContent = `
-                                    <h3 class="font-bold text-amber-400 mb-2 border-b border-amber-400/20 pb-1 flex justify-between">
-                                        Tremor Detected <span class="text-slate-500 font-sans font-normal border border-slate-600 rounded px-1">FFT</span>
+                                    <h3 class="font-bold text-amber-400 mb-2 border-b border-amber-400/20 pb-1 flex justify-between items-center">
+                                        Tremor Detected ${badgeHtml}
                                     </h3>
                                     <div class="grid grid-cols-2 gap-4 text-slate-300 mt-3">
                                         <div class="bg-amber-900/40 rounded p-2 text-center border border-amber-700/50">
@@ -392,15 +396,15 @@
                                 const modalDesc = document.getElementById('modal-desc');
                                 
                                 if (data.compound_signal) {
-                                    modalTitle.innerText = "Complex Motion Detected!";
-                                    modalTitle.className = "text-2xl font-bold text-rose-400 mb-1";
-                                    modalDesc.innerText = "Multiple rhythmic peaks were isolated during this episode. What activities were you doing simultaneously?";
-                                    window.currentLabelPrefix = "Compound_";
+                                    modalTitle.innerText = "Might be a Complex Signal!";
+                                    modalTitle.className = "text-xl font-bold text-rose-400 mb-1";
+                                    modalDesc.innerText = "Multiple frequencies detected. Please select the primary activity and verify the signal tag.";
+                                    document.getElementById('signal-tag-override').value = "Compound_";
                                 } else {
                                     modalTitle.innerText = "Isolated Rhythm Detected!";
-                                    modalTitle.className = "text-2xl font-bold text-amber-400 mb-1";
-                                    modalDesc.innerText = "A single, clean physiological rhythm concluded. What was this activity?";
-                                    window.currentLabelPrefix = "Isolated_";
+                                    modalTitle.className = "text-xl font-bold text-amber-400 mb-1";
+                                    modalDesc.innerText = "A clean physiological rhythm concluded. What was this activity?";
+                                    document.getElementById('signal-tag-override').value = "Isolated_";
                                 }
 
                                 if (window.xaiChart && data.xai_fft_freqs.length > 0) {
@@ -408,6 +412,12 @@
                                     window.xaiChart.data.datasets[0].data = data.xai_fft_amps;
                                     window.xaiChart.update();
                                 }
+
+                                // Reset UI States
+                                selectPrimaryLabel('Tremor'); // Default
+                                document.getElementById('other-select').value = "";
+                                document.getElementById('custom-input').value = "";
+                                document.getElementById('custom-input').disabled = true;
 
                                 modal.classList.remove('hidden');
                                 modal.classList.add('flex');
@@ -423,42 +433,51 @@
     </script>
     <!-- Active Learning Modal -->
     <div id="label-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
-        <div class="bg-slate-800 border-2 border-indigo-500 rounded-2xl shadow-2xl p-6 max-w-lg w-full text-center slide-up">
+        <div class="bg-slate-800 border-2 border-indigo-500 rounded-2xl shadow-2xl p-6 max-w-xl w-full text-center slide-up">
             
-            <h2 id="modal-title" class="text-2xl font-bold text-white mb-1">Signal Detected!</h2>
+            <h2 id="modal-title" class="text-xl font-bold text-white mb-1">Signal Detected!</h2>
             <div id="episode-duration" class="text-xs font-mono text-indigo-400 bg-indigo-900/30 inline-block px-2 py-1 rounded mb-4 border border-indigo-500/30">Duration: 0.0s</div>
             
             <!-- XAI Chart Area -->
-            <div class="w-full h-40 bg-slate-900 rounded-lg mb-4 border border-slate-700 relative p-2 shadow-inner">
+            <div class="w-full h-32 bg-slate-900 rounded-lg mb-3 border border-slate-700 relative p-2 shadow-inner">
                 <canvas id="xaiCanvas"></canvas>
             </div>
 
-            <p id="modal-desc" class="text-slate-300 text-sm mb-6 leading-relaxed">The system detected a sustained periodic movement. For the calibration protocol, please label what you were just doing.</p>
+            <p id="modal-desc" class="text-slate-300 text-xs mb-4 leading-relaxed">The system detected a sustained periodic movement. For the calibration protocol, please label what you were just doing.</p>
             
             <div class="space-y-3">
-                <div class="flex gap-3">
-                    <button onclick="submitLabel('Tremor')" class="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold rounded-lg transition-colors shadow-lg">
-                        Tremor
-                    </button>
-                    <button onclick="submitLabel('Walking')" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-emerald-950 font-bold rounded-lg transition-colors shadow-lg">
-                        Walking
-                    </button>
-                </div>
-                
-                <div class="flex gap-3">
-                    <select id="other-select" class="flex-1 bg-slate-700 text-white rounded-lg px-3 outline-none border border-slate-600 shadow-inner">
+                <!-- ROW 1: Labels -->
+                <div class="flex gap-2">
+                    <button type="button" id="btn-tremor" onclick="selectPrimaryLabel('Tremor')" class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded outline-none border border-slate-600 transition-colors">Tremor</button>
+                    <button type="button" id="btn-walking" onclick="selectPrimaryLabel('Walking')" class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded outline-none border border-slate-600 transition-colors">Walking</button>
+                    <select id="other-select" onchange="handleDropdown()" class="flex-1 bg-slate-700 text-white rounded px-2 outline-none border border-slate-600 shadow-inner text-sm focus:ring-2 focus:ring-indigo-500">
                         <option value="">Presets...</option>
                         <option value="Running">Running</option>
                         <option value="Driving">Driving</option>
                         <option value="Vehicle">Vehicle Ride</option>
-                        <option value="Typing">Typing</option>
-                        <option value="Idle">Idle Noise</option>
+                        <option value="Custom">Custom...</option>
                     </select>
-                    <input type="text" id="custom-input" placeholder="Or type custom..." class="flex-1 bg-slate-700 text-white rounded-lg px-3 py-3 outline-none border border-slate-600 shadow-inner placeholder-slate-400 text-sm">
+                    <input type="text" id="custom-input" placeholder="Type here..." class="w-1/4 bg-slate-700 text-white rounded px-2 py-2 outline-none border border-slate-600 shadow-inner placeholder-slate-400 text-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                 </div>
-                <button onclick="submitOtherLabel()" class="w-full py-3 border-2 border-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-lg transition-colors shadow-lg mt-2">
-                    Save Other / Custom
-                </button>
+
+                <!-- ROW 2: Signal Nature Override -->
+                <div class="flex gap-2 mt-2 p-3 bg-slate-900/50 rounded-lg items-center justify-between border border-slate-700">
+                    <span class="text-sm text-slate-300 font-medium">Dataset Save Formatting:</span>
+                    <select id="signal-tag-override" class="bg-indigo-900/50 text-indigo-300 font-bold rounded px-3 py-1 outline-none border border-indigo-700/50 text-sm">
+                        <option value="Isolated_">Isolated Signal (Trust me)</option>
+                        <option value="Compound_">Compound Signal (Keep multi-peak tag)</option>
+                    </select>
+                </div>
+                
+                <!-- ROW 3: Actions -->
+                <div class="flex gap-3 pt-2">
+                    <button onclick="rejectData()" class="flex-1 py-3 bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 font-bold rounded-lg transition-colors">
+                        Reject (Discard)
+                    </button>
+                    <button onclick="submitFinalData()" class="flex-[2] py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-lg transition-colors shadow-lg">
+                        Save to Dataset
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -493,17 +512,69 @@
             }
         });
 
-        function submitOtherLabel() {
-            const sel = document.getElementById('other-select').value;
-            const txt = document.getElementById('custom-input').value.trim();
-            const finalLabel = txt !== "" ? txt : (sel !== "" ? sel : "Unknown");
-            submitLabel(finalLabel);
+        window.selectedLabel = "";
+
+        function selectPrimaryLabel(l) {
+            window.selectedLabel = l;
+            document.getElementById('btn-tremor').classList.remove('bg-indigo-600', 'border-indigo-400', 'text-white');
+            document.getElementById('btn-walking').classList.remove('bg-indigo-600', 'border-indigo-400', 'text-white');
+            document.getElementById('btn-tremor').classList.add('bg-slate-700', 'border-slate-600');
+            document.getElementById('btn-walking').classList.add('bg-slate-700', 'border-slate-600');
+            
+            document.getElementById('other-select').value = "";
+            document.getElementById('custom-input').disabled = true;
+            
+            if(l === 'Tremor') {
+                document.getElementById('btn-tremor').classList.add('bg-indigo-600', 'border-indigo-400', 'text-white');
+                document.getElementById('btn-tremor').classList.remove('bg-slate-700', 'border-slate-600');
+            } else if(l === 'Walking') {
+                document.getElementById('btn-walking').classList.add('bg-indigo-600', 'border-indigo-400', 'text-white');
+                document.getElementById('btn-walking').classList.remove('bg-slate-700', 'border-slate-600');
+            }
         }
 
-        function submitLabel(labelName) {
-            const prefix = window.currentLabelPrefix || "";
-            const taggedLabel = prefix + labelName;
+        function handleDropdown() {
+            window.selectedLabel = ""; 
+            document.getElementById('btn-tremor').classList.remove('bg-indigo-600', 'border-indigo-400');
+            document.getElementById('btn-walking').classList.remove('bg-indigo-600', 'border-indigo-400');
+            document.getElementById('btn-tremor').classList.add('bg-slate-700', 'border-slate-600');
+            document.getElementById('btn-walking').classList.add('bg-slate-700', 'border-slate-600');
+            
+            const sel = document.getElementById('other-select').value;
+            const customInput = document.getElementById('custom-input');
+            if(sel === 'Custom') {
+                customInput.disabled = false;
+                customInput.focus();
+            } else {
+                customInput.disabled = true;
+                window.selectedLabel = sel;
+            }
+        }
 
+        function submitFinalData() {
+            let label = window.selectedLabel;
+            
+            // if Custom dropdown is active, pull from the text input
+            if (document.getElementById('other-select').value === 'Custom') {
+                label = document.getElementById('custom-input').value.trim();
+            }
+            
+            if (!label) {
+                alert("Please select a label via the buttons or dropdown before saving!");
+                return;
+            }
+
+            const prefix = document.getElementById('signal-tag-override').value;
+            const taggedLabel = prefix + label;
+            
+            fireLogDataRequest(taggedLabel);
+        }
+
+        function rejectData() {
+            fireLogDataRequest("REJECT");
+        }
+
+        function fireLogDataRequest(taggedLabel) {
             fetch('/log_data', {
                 method: 'POST',
                 headers: {
@@ -513,20 +584,22 @@
             }).then(response => response.json())
               .then(data => {
                   console.log(data);
-                  const modal = document.getElementById('label-modal');
-                  if (modal) {
-                      modal.classList.remove('flex');
-                      modal.classList.add('hidden');
-                      modal.style.display = ''; // Wipe any lingering inline styles
-                  }
-                  
-                  // Destroy chart data to clean up for the next episode
-                  if(window.xaiChart) {
-                      window.xaiChart.data.labels = [];
-                      window.xaiChart.data.datasets[0].data = [];
-                      window.xaiChart.update();
-                  }
+                  closeModal();
               });
+        }
+        
+        function closeModal() {
+            const modal = document.getElementById('label-modal');
+            if (modal) {
+                modal.classList.remove('flex');
+                modal.classList.add('hidden');
+                modal.style.display = ''; 
+            }
+            if(window.xaiChart) {
+                window.xaiChart.data.labels = [];
+                window.xaiChart.data.datasets[0].data = [];
+                window.xaiChart.update();
+            }
         }
     </script>
 </body>
